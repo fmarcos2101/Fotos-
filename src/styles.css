@@ -114,13 +114,15 @@ input {
   grid-template-columns: minmax(0, 1fr) 22rem;
   gap: 1.2rem;
   padding: 0 1.4rem 1.4rem;
-  min-height: calc(100vh - 5rem);
+  height: calc(100vh - 5rem);
+  min-height: 36rem;
 }
 
 .crop-wrap {
   display: flex;
   flex-direction: column;
-  min-height: 70vh;
+  min-height: 0;
+  height: 100%;
   background: #1c1916;
   border-radius: 24px;
   overflow: hidden;
@@ -130,7 +132,7 @@ input {
 .crop-canvas {
   flex: 1;
   width: 100%;
-  min-height: 28rem;
+  min-height: 0;
   touch-action: none;
   cursor: grab;
 }
@@ -159,6 +161,15 @@ input {
   display: flex;
   flex-direction: column;
   gap: 0.9rem;
+  min-height: 0;
+}
+
+.sidebar-scroll {
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+  min-height: 0;
+  overflow: auto;
 }
 
 .panel {
@@ -257,7 +268,7 @@ input {
 .sheet-box {
   background: var(--bg-deep);
   border-radius: 16px;
-  padding: 1rem;
+  padding: 0.7rem 1.6rem;
 }
 
 .sheet-canvas {
@@ -300,10 +311,12 @@ input {
 @media (max-width: 960px) {
   .workspace {
     grid-template-columns: 1fr;
+    height: auto;
   }
 
   .crop-wrap {
     min-height: 60vh;
+    height: 60vh;
   }
 
   .crop-help {

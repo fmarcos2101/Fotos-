@@ -145,6 +145,7 @@ export default function App() {
           />
 
           <aside className="sidebar">
+            <div className="sidebar-scroll">
             <SizePicker
               selectedId={sizeId}
               widthCm={widthCm}
@@ -190,6 +191,7 @@ export default function App() {
                 {Math.round(dpi)} DPI · {quality.label}
               </p>
             </section>
+            </div>
 
             <section className="panel actions">
               <button type="button" className="btn btn-primary" onClick={handlePrint} disabled={Boolean(busy) || !layout.fits}>
