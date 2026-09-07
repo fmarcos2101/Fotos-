@@ -3,8 +3,9 @@ import { CropEditor } from "./components/CropEditor";
 import { SheetPreview } from "./components/SheetPreview";
 import { SizePicker } from "./components/SizePicker";
 import { Uploader } from "./components/Uploader";
-import { coverCrop, retargetCrop, type CropRect } from "./lib/crop";
+import { BACKGROUND_LABELS, type Background } from "./lib/draw";
 import { downloadPdf, downloadPng, printCanvas, renderSheet, renderTile } from "./lib/export";
+import { defaultView, frameFromView, type FitMode, type View } from "./lib/frame";
 import { loadPhoto } from "./lib/image";
 import { layoutSheet, qualityLabel, type LayoutMode } from "./lib/layout";
 import { CUSTOM_SIZE_ID, PRESET_SIZES, sizeAspect } from "./lib/sizes";
@@ -20,7 +21,9 @@ export default function App() {
   const [sizeId, setSizeId] = useState(PRESET_SIZES[0].id);
   const [widthCm, setWidthCm] = useState(10);
   const [heightCm, setHeightCm] = useState(10);
-  const [crop, setCrop] = useState<CropRect | null>(null);
+  const [view, setView] = useState<View | null>(null);
+  const [fit, setFit] = useState<FitMode>("contain");
+  const [background, setBackground] = useState<Background>("white");
   const [mode, setMode] = useState<LayoutMode>("fill");
   const [showGuides, setShowGuides] = useState(true);
   const [busy, setBusy] = useState<string | null>(null);
@@ -31,19 +34,20 @@ export default function App() {
 
   useEffect(() => {
     if (!photo) return;
-    setCrop((current) =>
-      current
-        ? retargetCrop(current, photo.image.width, photo.image.height, aspect)
-        : coverCrop(photo.image.width, photo.image.height, aspect),
-    );
-  }, [aspect, photo]);
+    setView(defaultView(photo.image.width, photo.image.height));
+  }, [fit, photo]);
 
   const layout = useMemo(
     () => layoutSheet(cmToMm(widthCm), cmToMm(heightCm), mode),
     [widthCm, heightCm, mode],
   );
 
-  const dpi = crop && layout.tiles[0] ? cropDpi(crop.w, layout.tiles[0].w) : 0;
+  const frame =
+    photo && view
+      ? frameFromView(photo.image.width, photo.image.height, aspect, fit, view)
+      : null;
+
+  const dpi = frame && layout.tiles[0] ? cropDpi(frame.w, layout.tiles[0].w) : 0;
   const quality = qualityLabel(dpi);
 
   async function handleFile(file: File) {
@@ -51,7 +55,7 @@ export default function App() {
     try {
       const image = await loadPhoto(file);
       setPhoto({ file, image });
-      setCrop(coverCrop(image.width, image.height, aspect));
+      setView(defaultView(image.width, image.height));
     } catch {
       setError("Não foi possível ler essa imagem. Tente JPG, PNG ou WebP.");
     }
@@ -71,7 +75,6 @@ export default function App() {
   }
 
   async function withExport(label: string, action: () => void | Promise<void>) {
-    if (!photo || !crop) return;
     setBusy(label);
     setError(null);
     try {
@@ -84,24 +87,27 @@ export default function App() {
   }
 
   function handlePrint() {
-    if (!photo || !crop) return;
+    if (!photo || !frame) return;
     withExport("Preparando impressão…", () => {
-      printCanvas(renderSheet(photo.image, crop, layout, showGuides));
+      printCanvas(renderSheet(photo.image, frame, layout, background, showGuides));
     });
   }
 
   function handlePdf() {
-    if (!photo || !crop) return;
-    withExport("Gerando PDF…", () => {
-      downloadPdf(renderSheet(photo.image, crop, layout, showGuides), `azulejo-${slug(sizeLabel)}.pdf`);
-    });
+    if (!photo || !frame) return;
+    withExport("Gerando PDF…", () =>
+      downloadPdf(
+        renderSheet(photo.image, frame, layout, background, showGuides),
+        `azulejo-${slug(sizeLabel)}.pdf`,
+      ),
+    );
   }
 
   function handlePng() {
-    if (!photo || !crop) return;
+    if (!photo || !frame) return;
     withExport("Gerando PNG…", () => {
       downloadPng(
-        renderTile(photo.image, crop, cmToMm(widthCm), cmToMm(heightCm)),
+        renderTile(photo.image, frame, cmToMm(widthCm), cmToMm(heightCm), background),
         `azulejo-${slug(sizeLabel)}.png`,
       );
     });
@@ -115,7 +121,11 @@ export default function App() {
           <p className="brand-sub">Fotos para azulejos</p>
         </div>
         {photo ? (
-          <button type="button" className="btn btn-ghost" onClick={() => document.getElementById("replace-input")?.click()}>
+          <button
+            type="button"
+            className="btn btn-ghost"
+            onClick={() => document.getElementById("replace-input")?.click()}
+          >
             Trocar foto
           </button>
         ) : null}
@@ -132,75 +142,138 @@ export default function App() {
         />
       </header>
 
-      {!photo || !crop ? (
+      {!photo || !view || !frame ? (
         <Uploader onFile={handleFile} />
       ) : (
         <main className="workspace">
           <CropEditor
             image={photo.image}
-            crop={crop}
+            view={view}
             aspect={aspect}
+            mode={fit}
+            background={background}
             sizeLabel={sizeLabel}
-            onCropChange={setCrop}
+            onViewChange={setView}
           />
 
           <aside className="sidebar">
             <div className="sidebar-scroll">
-            <SizePicker
-              selectedId={sizeId}
-              widthCm={widthCm}
-              heightCm={heightCm}
-              onSelect={handleSelect}
-              onCustomChange={handleCustom}
-            />
+              <section className="panel">
+                <h2>Ajuste da foto</h2>
+                <div className="mode-row">
+                  <button
+                    type="button"
+                    className={fit === "contain" ? "chip chip-active" : "chip"}
+                    onClick={() => setFit("contain")}
+                  >
+                    Foto inteira
+                  </button>
+                  <button
+                    type="button"
+                    className={fit === "cover" ? "chip chip-active" : "chip"}
+                    onClick={() => setFit("cover")}
+                  >
+                    Cortar
+                  </button>
+                </div>
+                <p className="hint">
+                  {fit === "contain"
+                    ? "A foto entra completa, sem cortar nada. O espaço que sobra recebe o fundo escolhido."
+                    : "A foto preenche o azulejo inteiro e as bordas que sobram são cortadas."}
+                </p>
+                {fit === "contain" ? (
+                  <div className="mode-row bg-row">
+                    {(Object.keys(BACKGROUND_LABELS) as Background[]).map((option) => (
+                      <button
+                        key={option}
+                        type="button"
+                        className={background === option ? "chip chip-active" : "chip"}
+                        onClick={() => setBackground(option)}
+                      >
+                        {BACKGROUND_LABELS[option]}
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
+              </section>
 
-            <section className="panel">
-              <h2>Folha A4</h2>
-              <div className="mode-row">
-                <button
-                  type="button"
-                  className={mode === "one" ? "chip chip-active" : "chip"}
-                  onClick={() => setMode("one")}
-                >
-                  1 no centro
-                </button>
-                <button
-                  type="button"
-                  className={mode === "fill" ? "chip chip-active" : "chip"}
-                  onClick={() => setMode("fill")}
-                >
-                  Preencher folha
-                </button>
-              </div>
-              <label className="check">
-                <input
-                  type="checkbox"
-                  checked={showGuides}
-                  onChange={(event) => setShowGuides(event.target.checked)}
-                />
-                Marcas de corte
-              </label>
-              <div className="sheet-box">
-                <SheetPreview image={photo.image} crop={crop} layout={layout} showGuides={showGuides} />
-              </div>
-              <p className="sheet-meta">
-                {layout.tiles.length} {layout.tiles.length === 1 ? "azulejo" : "azulejos"} · {sizeLabel}
-                {layout.fits ? "" : " · não cabe na folha"}
-              </p>
-              <p className={`quality quality-${quality.tone}`}>
-                {Math.round(dpi)} DPI · {quality.label}
-              </p>
-            </section>
+              <SizePicker
+                selectedId={sizeId}
+                widthCm={widthCm}
+                heightCm={heightCm}
+                onSelect={handleSelect}
+                onCustomChange={handleCustom}
+              />
+
+              <section className="panel">
+                <h2>Folha A4</h2>
+                <div className="mode-row">
+                  <button
+                    type="button"
+                    className={mode === "one" ? "chip chip-active" : "chip"}
+                    onClick={() => setMode("one")}
+                  >
+                    1 no centro
+                  </button>
+                  <button
+                    type="button"
+                    className={mode === "fill" ? "chip chip-active" : "chip"}
+                    onClick={() => setMode("fill")}
+                  >
+                    Máximo por folha
+                  </button>
+                </div>
+                <label className="check">
+                  <input
+                    type="checkbox"
+                    checked={showGuides}
+                    onChange={(event) => setShowGuides(event.target.checked)}
+                  />
+                  Marcas de corte
+                </label>
+                <div className="sheet-box">
+                  <SheetPreview
+                    image={photo.image}
+                    frame={frame}
+                    layout={layout}
+                    background={background}
+                    showGuides={showGuides}
+                  />
+                </div>
+                <p className="sheet-meta">
+                  {layout.tiles.length} {layout.tiles.length === 1 ? "azulejo" : "azulejos"} ·{" "}
+                  {sizeLabel}
+                  {layout.fits ? "" : " · não cabe na folha"}
+                </p>
+                <p className={`quality quality-${quality.tone}`}>
+                  {Math.round(dpi)} DPI · {quality.label}
+                </p>
+              </section>
             </div>
 
             <section className="panel actions">
-              <button type="button" className="btn btn-primary" onClick={handlePrint} disabled={Boolean(busy) || !layout.fits}>
+              <button
+                type="button"
+                className="btn btn-primary"
+                onClick={handlePrint}
+                disabled={Boolean(busy) || !layout.fits}
+              >
                 Imprimir A4
               </button>
-              <button type="button" className="btn btn-secondary" onClick={handlePdf} disabled={Boolean(busy) || !layout.fits}>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={handlePdf}
+                disabled={Boolean(busy) || !layout.fits}
+              >
                 Baixar PDF
               </button>
-              <button type="button" className="btn btn-secondary" onClick={handlePng} disabled={Boolean(busy)}>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={handlePng}
+                disabled={Boolean(busy)}
+              >
                 Baixar PNG do azulejo
               </button>
               {busy ? <p className="hint">{busy}</p> : null}

@@ -1,4 +1,5 @@
-import type { CropRect } from "./crop";
+import { drawFramed, type Background } from "./draw";
+import type { Rect } from "./frame";
 import type { SheetLayout } from "./layout";
 import { A4_HEIGHT_MM, A4_WIDTH_MM, mmToPx, PRINT_DPI } from "./units";
 
@@ -38,8 +39,9 @@ function drawCropMarks(
 
 export function renderSheet(
   image: ImageBitmap,
-  crop: CropRect,
+  frame: Rect,
   layout: SheetLayout,
+  background: Background,
   showGuides: boolean,
 ): HTMLCanvasElement {
   const canvas = document.createElement("canvas");
@@ -52,17 +54,17 @@ export function renderSheet(
 
   ctx.fillStyle = "#ffffff";
   ctx.fillRect(0, 0, canvas.width, canvas.height);
-  ctx.imageSmoothingEnabled = true;
-  ctx.imageSmoothingQuality = "high";
 
   for (const tile of layout.tiles) {
-    const dx = mmToPx(tile.x);
-    const dy = mmToPx(tile.y);
-    const dw = mmToPx(tile.w);
-    const dh = mmToPx(tile.h);
-    ctx.drawImage(image, crop.x, crop.y, crop.w, crop.h, dx, dy, dw, dh);
+    const dest = {
+      x: mmToPx(tile.x),
+      y: mmToPx(tile.y),
+      w: mmToPx(tile.w),
+      h: mmToPx(tile.h),
+    };
+    drawFramed(ctx, image, image.width, image.height, frame, dest, background);
     if (showGuides) {
-      drawCropMarks(ctx, dx, dy, dw, dh);
+      drawCropMarks(ctx, dest.x, dest.y, dest.w, dest.h);
     }
   }
 
@@ -71,9 +73,10 @@ export function renderSheet(
 
 export function renderTile(
   image: ImageBitmap,
-  crop: CropRect,
+  frame: Rect,
   widthMm: number,
   heightMm: number,
+  background: Background,
 ): HTMLCanvasElement {
   const canvas = document.createElement("canvas");
   canvas.width = mmToPx(widthMm);
@@ -82,9 +85,15 @@ export function renderTile(
   if (!ctx) {
     throw new Error("Não foi possível criar o canvas do azulejo.");
   }
-  ctx.imageSmoothingEnabled = true;
-  ctx.imageSmoothingQuality = "high";
-  ctx.drawImage(image, crop.x, crop.y, crop.w, crop.h, 0, 0, canvas.width, canvas.height);
+  drawFramed(
+    ctx,
+    image,
+    image.width,
+    image.height,
+    frame,
+    { x: 0, y: 0, w: canvas.width, h: canvas.height },
+    background,
+  );
   return canvas;
 }
 

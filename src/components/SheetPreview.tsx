@@ -1,15 +1,23 @@
 import { useEffect, useRef } from "react";
-import type { CropRect } from "../lib/crop";
+import { drawFramed, type Background } from "../lib/draw";
+import type { Rect } from "../lib/frame";
 import type { SheetLayout } from "../lib/layout";
 
 type SheetPreviewProps = {
   image: ImageBitmap;
-  crop: CropRect;
+  frame: Rect;
   layout: SheetLayout;
+  background: Background;
   showGuides: boolean;
 };
 
-export function SheetPreview({ image, crop, layout, showGuides }: SheetPreviewProps) {
+export function SheetPreview({
+  image,
+  frame,
+  layout,
+  background,
+  showGuides,
+}: SheetPreviewProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
   useEffect(() => {
@@ -30,20 +38,22 @@ export function SheetPreview({ image, crop, layout, showGuides }: SheetPreviewPr
 
     const sx = cssW / layout.pageWidthMm;
     const sy = cssH / layout.pageHeightMm;
-    ctx.imageSmoothingEnabled = true;
-    ctx.imageSmoothingQuality = "high";
 
     for (const tile of layout.tiles) {
-      const x = tile.x * sx;
-      const y = tile.y * sy;
-      const w = tile.w * sx;
-      const h = tile.h * sy;
-      ctx.drawImage(image, crop.x, crop.y, crop.w, crop.h, x, y, w, h);
+      const dest = {
+        x: tile.x * sx,
+        y: tile.y * sy,
+        w: tile.w * sx,
+        h: tile.h * sy,
+      };
+      drawFramed(ctx, image, image.width, image.height, frame, dest, background);
+
       ctx.strokeStyle = "rgba(28, 25, 22, 0.28)";
       ctx.lineWidth = 1;
-      ctx.strokeRect(x + 0.5, y + 0.5, w - 1, h - 1);
+      ctx.strokeRect(dest.x + 0.5, dest.y + 0.5, dest.w - 1, dest.h - 1);
 
       if (showGuides) {
+        const { x, y, w, h } = dest;
         ctx.strokeStyle = "rgba(28, 25, 22, 0.45)";
         ctx.beginPath();
         ctx.moveTo(x - 6, y);
@@ -61,7 +71,7 @@ export function SheetPreview({ image, crop, layout, showGuides }: SheetPreviewPr
         ctx.stroke();
       }
     }
-  }, [image, crop, layout, showGuides]);
+  }, [image, frame, layout, background, showGuides]);
 
   return <canvas ref={canvasRef} className="sheet-canvas" />;
 }

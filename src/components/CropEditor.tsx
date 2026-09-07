@@ -1,54 +1,62 @@
 import { useEffect, useRef, type PointerEvent, type WheelEvent } from "react";
-import type { CropRect } from "../lib/crop";
-import { clampCrop, coverCrop, moveCrop, zoomCrop } from "../lib/crop";
+import { drawFramed, type Background } from "../lib/draw";
+import {
+  defaultView,
+  frameFromView,
+  panView,
+  zoomView,
+  type FitMode,
+  type Rect,
+  type View,
+} from "../lib/frame";
 import { clamp } from "../lib/units";
 
 type CropEditorProps = {
   image: ImageBitmap;
-  crop: CropRect;
+  view: View;
   aspect: number;
+  mode: FitMode;
+  background: Background;
   sizeLabel: string;
-  onCropChange: (crop: CropRect) => void;
+  onViewChange: (view: View) => void;
 };
 
-export function CropEditor({ image, crop, aspect, sizeLabel, onCropChange }: CropEditorProps) {
+const FRAME_PADDING = 0.08;
+
+function destRect(width: number, height: number, aspect: number): Rect {
+  const pad = Math.min(width, height) * FRAME_PADDING;
+  const maxW = width - pad * 2;
+  const maxH = height - pad * 2;
+  let w = maxW;
+  let h = w / aspect;
+  if (h > maxH) {
+    h = maxH;
+    w = h * aspect;
+  }
+  return { x: (width - w) / 2, y: (height - h) / 2, w, h };
+}
+
+export function CropEditor({
+  image,
+  view,
+  aspect,
+  mode,
+  background,
+  sizeLabel,
+  onViewChange,
+}: CropEditorProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const cropRef = useRef(crop);
+  const viewRef = useRef(view);
   const pointers = useRef(new Map<number, { x: number; y: number }>());
-  const pinch = useRef<{ distance: number; crop: CropRect } | null>(null);
+  const pinch = useRef<{ distance: number; view: View } | null>(null);
 
   useEffect(() => {
-    cropRef.current = crop;
-  }, [crop]);
+    viewRef.current = view;
+  }, [view]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-
-    function frameRect(width: number, height: number) {
-      const pad = Math.min(width, height) * 0.08;
-      const maxW = width - pad * 2;
-      const maxH = height - pad * 2;
-      let w = maxW;
-      let h = w / aspect;
-      if (h > maxH) {
-        h = maxH;
-        w = h * aspect;
-      }
-      return { x: (width - w) / 2, y: (height - h) / 2, w, h };
-    }
-
-    function imagePlacement(width: number, height: number, nextCrop: CropRect) {
-      const frame = frameRect(width, height);
-      const scale = frame.w / nextCrop.w;
-      return {
-        frame,
-        left: frame.x - nextCrop.x * scale,
-        top: frame.y - nextCrop.y * scale,
-        drawW: image.width * scale,
-        drawH: image.height * scale,
-      };
-    }
 
     function paint() {
       const surface = canvasRef.current;
@@ -65,71 +73,52 @@ export function CropEditor({ image, crop, aspect, sizeLabel, onCropChange }: Cro
       ctx.fillStyle = "#1c1916";
       ctx.fillRect(0, 0, cssW, cssH);
 
-      const nextCrop = cropRef.current;
-      const { frame, left, top, drawW, drawH } = imagePlacement(cssW, cssH, nextCrop);
-
-      ctx.imageSmoothingEnabled = true;
-      ctx.imageSmoothingQuality = "high";
-      ctx.drawImage(image, left, top, drawW, drawH);
+      const dest = destRect(cssW, cssH, aspect);
+      const frame = frameFromView(image.width, image.height, aspect, mode, viewRef.current);
 
       ctx.save();
-      ctx.fillStyle = "rgba(14, 11, 9, 0.52)";
-      ctx.beginPath();
-      ctx.rect(0, 0, cssW, cssH);
-      ctx.rect(frame.x, frame.y, frame.w, frame.h);
-      ctx.fill("evenodd");
+      ctx.globalAlpha = 0.28;
+      ctx.imageSmoothingEnabled = true;
+      const scale = dest.w / frame.w;
+      ctx.drawImage(
+        image,
+        dest.x - frame.x * scale,
+        dest.y - frame.y * scale,
+        image.width * scale,
+        image.height * scale,
+      );
       ctx.restore();
+
+      drawFramed(ctx, image, image.width, image.height, frame, dest, background);
 
       ctx.strokeStyle = "#fff6ec";
       ctx.lineWidth = 2;
-      ctx.strokeRect(frame.x + 1, frame.y + 1, frame.w - 2, frame.h - 2);
+      ctx.strokeRect(dest.x + 1, dest.y + 1, dest.w - 2, dest.h - 2);
 
       ctx.setLineDash([5, 5]);
-      ctx.strokeStyle = "rgba(255, 246, 236, 0.45)";
-      ctx.strokeRect(frame.x + frame.w / 3, frame.y, frame.w / 3, frame.h);
-      ctx.strokeRect(frame.x, frame.y + frame.h / 3, frame.w, frame.h / 3);
+      ctx.strokeStyle = "rgba(255, 246, 236, 0.4)";
+      ctx.strokeRect(dest.x + dest.w / 3, dest.y, dest.w / 3, dest.h);
+      ctx.strokeRect(dest.x, dest.y + dest.h / 3, dest.w, dest.h / 3);
       ctx.setLineDash([]);
 
       ctx.font = "600 13px Outfit, sans-serif";
       ctx.fillStyle = "#fff6ec";
       ctx.textAlign = "center";
-      ctx.fillText(sizeLabel, frame.x + frame.w / 2, frame.y - 12);
+      ctx.fillText(sizeLabel, dest.x + dest.w / 2, dest.y - 12);
     }
 
     paint();
     const observer = new ResizeObserver(paint);
     observer.observe(canvas);
     return () => observer.disconnect();
-  }, [image, crop, aspect, sizeLabel]);
+  }, [image, view, aspect, mode, background, sizeLabel]);
 
-  function viewToImage(clientX: number, clientY: number) {
+  function imageScale(): number {
     const canvas = canvasRef.current;
-    if (!canvas) return { x: 0, y: 0 };
-    const bounds = canvas.getBoundingClientRect();
-    const x = clientX - bounds.left;
-    const y = clientY - bounds.top;
-    const pad = Math.min(canvas.clientWidth, canvas.clientHeight) * 0.08;
-    const maxW = canvas.clientWidth - pad * 2;
-    const maxH = canvas.clientHeight - pad * 2;
-    let w = maxW;
-    let h = w / aspect;
-    if (h > maxH) {
-      h = maxH;
-      w = h * aspect;
-    }
-    const frame = {
-      x: (canvas.clientWidth - w) / 2,
-      y: (canvas.clientHeight - h) / 2,
-      w,
-      h,
-    };
-    const scale = frame.w / cropRef.current.w;
-    const left = frame.x - cropRef.current.x * scale;
-    const top = frame.y - cropRef.current.y * scale;
-    return {
-      x: (x - left) / scale,
-      y: (y - top) / scale,
-    };
+    if (!canvas) return 1;
+    const dest = destRect(canvas.clientWidth, canvas.clientHeight, aspect);
+    const frame = frameFromView(image.width, image.height, aspect, mode, viewRef.current);
+    return dest.w / frame.w;
   }
 
   function onPointerDown(event: PointerEvent<HTMLCanvasElement>) {
@@ -137,8 +126,10 @@ export function CropEditor({ image, crop, aspect, sizeLabel, onCropChange }: Cro
     pointers.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
     if (pointers.current.size === 2) {
       const [a, b] = [...pointers.current.values()];
-      const distance = Math.hypot(a.x - b.x, a.y - b.y);
-      pinch.current = { distance, crop: cropRef.current };
+      pinch.current = {
+        distance: Math.hypot(a.x - b.x, a.y - b.y),
+        view: viewRef.current,
+      };
     }
   }
 
@@ -150,28 +141,25 @@ export function CropEditor({ image, crop, aspect, sizeLabel, onCropChange }: Cro
     if (pointers.current.size === 2 && pinch.current) {
       const [a, b] = [...pointers.current.values()];
       const distance = Math.hypot(a.x - b.x, a.y - b.y);
-      const factor = distance / pinch.current.distance;
-      onCropChange(
-        zoomCrop(pinch.current.crop, image.width, image.height, clamp(factor, 0.25, 8)),
+      const factor = clamp(distance / pinch.current.distance, 0.2, 8);
+      onViewChange(
+        zoomView(pinch.current.view, image.width, image.height, aspect, mode, factor),
       );
       return;
     }
 
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const pad = Math.min(canvas.clientWidth, canvas.clientHeight) * 0.08;
-    const maxW = canvas.clientWidth - pad * 2;
-    const maxH = canvas.clientHeight - pad * 2;
-    let frameW = maxW;
-    let frameH = frameW / aspect;
-    if (frameH > maxH) {
-      frameH = maxH;
-      frameW = frameH * aspect;
-    }
-    const scale = frameW / cropRef.current.w;
-    const dx = (previous.x - event.clientX) / scale;
-    const dy = (previous.y - event.clientY) / scale;
-    onCropChange(moveCrop(cropRef.current, image.width, image.height, dx, dy));
+    const scale = imageScale();
+    onViewChange(
+      panView(
+        viewRef.current,
+        image.width,
+        image.height,
+        aspect,
+        mode,
+        (previous.x - event.clientX) / scale,
+        (previous.y - event.clientY) / scale,
+      ),
+    );
   }
 
   function onPointerUp(event: PointerEvent<HTMLCanvasElement>) {
@@ -183,19 +171,16 @@ export function CropEditor({ image, crop, aspect, sizeLabel, onCropChange }: Cro
 
   function onWheel(event: WheelEvent<HTMLCanvasElement>) {
     event.preventDefault();
-    const origin = viewToImage(event.clientX, event.clientY);
     const factor = event.deltaY < 0 ? 1.08 : 1 / 1.08;
-    onCropChange(zoomCrop(cropRef.current, image.width, image.height, factor, origin.x, origin.y));
+    onViewChange(
+      zoomView(viewRef.current, image.width, image.height, aspect, mode, factor),
+    );
   }
 
-  function resetCrop() {
-    onCropChange(coverCrop(image.width, image.height, aspect));
-  }
-
-  function fitWidth() {
-    const cover = coverCrop(image.width, image.height, aspect);
-    onCropChange(clampCrop({ x: 0, y: crop.y, w: cover.w, h: cover.h }, image.width, image.height));
-  }
+  const hint =
+    mode === "contain"
+      ? "A foto inteira cabe no azulejo · role para dar mais margem"
+      : "Arraste para escolher o corte · role para ampliar";
 
   return (
     <div className="crop-wrap">
@@ -209,13 +194,14 @@ export function CropEditor({ image, crop, aspect, sizeLabel, onCropChange }: Cro
         onWheel={onWheel}
       />
       <div className="crop-help">
-        <span>Arraste para enquadrar · role para ampliar</span>
+        <span>{hint}</span>
         <div className="crop-actions">
-          <button type="button" className="btn btn-ghost" onClick={resetCrop}>
+          <button
+            type="button"
+            className="btn btn-ghost"
+            onClick={() => onViewChange(defaultView(image.width, image.height))}
+          >
             Recentrar
-          </button>
-          <button type="button" className="btn btn-ghost" onClick={fitWidth}>
-            Usar a largura
           </button>
         </div>
       </div>
